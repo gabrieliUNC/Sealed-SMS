@@ -1,0 +1,350 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{fancyvrb}
+%the accompanying latexdefs.tex file includes helpful packages and other useful commands. You probably won't need to edit it.
+\input{latexdefs}
+\renewcommand\IEEEkeywordsname{Keywords}
+\usepackage{mathtools, nccmath}
+\usepackage{amssymb, amsthm, mathrsfs}
+\usepackage{array} % required for text wrapping in tables
+\usepackage{listings}% http://ctan.org/pkg/listings
+\lstset{
+  basicstyle=\ttfamily,
+  mathescape
+}
+
+
+\begin{document}
+
+\title{Seal your SMS in an Envelope}
+
+
+\author{\IEEEauthorblockN{Gabriel Schell}
+\and
+\IEEEauthorblockN{Ethan Rayala}
+\and
+\IEEEauthorblockN{Bodhi Harmony}
+\and
+\IEEEauthorblockN{Raheel Qamar}
+}
+
+\maketitle
+
+\begin{abstract}
+
+Our messaging service employs modern cryptographic techniques, engineered by Signal, to provide users with a seamless end-to-end encrypted messaging application. The underlying cryptographic scheme we leverage already provides strong security properties such as forward secrecy and break-in recovery \cite{https://www.signal.org/docs/specifications/doubleratchet/}. However, a key goal of our service is to allow users to send messages without revealing their identity to the messaging server, therefore decreasing the user meta-data we track. This “Sealed Sender” protocol functions as an envelope that the server can use to direct mail to the intended recipient's inbox for retrieval and unpacking without knowing who gave the envelope to the server \cite{https://signal.org/blog/sealed-sender/}. In addition, we leverage the x3dh key agreement protocol to generate a shared secret between two parties and as an input key to the underlying e2e encrypted messaging protocol. This has the potential to provide additional security guarantees but still requires some trust in a Third Party (our messaging server) and additionally requires manual authentication \cite{https://signal.org/docs/specifications/x3dh/}.  
+\newline
+
+\end{abstract}
+
+
+\begin{IEEEkeywords}
+Sealed Sender, X3DH, meta-data, end-to-end
+\end{IEEEkeywords}
+
+
+\section{Introduction}
+With the advent of new digital avenues for communication, there has also been an unprecedented rise in surveillance, revealing new security concerns that this project aims to address. In particular, we claim that the threat model has changed. Users have much less fear of the external malicious adversary, attempting to eavesdrop or tamper with encrypted packets. Instead, this adversary encrypts our messages, performs our search engine requests, and compiles our social media timelines. This adversary uses the trust we place in it to monetize targeted ad schemes by reading our plaintext messages \cite{https://www.bbc.com/news/technology-46618582} or redirecting our browsers to third-party cookies \cite{https://support.google.com/searchads/answer/2839090?hl=en}. Even if your software company of choice does not breach your trust in the pursuit of monetary gain, historical lawsuits illustrate that the federal government may compel companies to do so \cite{https://epic.org/documents/apple-v-fbi-2/}). This threat model highlights that there are additional security concerns in the Trusted Third Party setting. We argue that there is a negative correlation between the amount of user meta-data retained and user privacy. In particular, we propose a new messenger with these goals at the core of its development. End-2-End encrypted messaging. Each conversation will be encrypted using the same symmetric messaging keys. Our service will also allow users to verify their symmetric conversation keys manually. Sealed Sender: send messages without our service seeing the “from:” tag. Of course, the recipient of messages sent with this feature will decrypt and verify the sender’s public identity. The Extended Triple Diffie-Hellman key agreement protocol (X3DH). Two users establish a shared secret that can be used to start a conversation with less trust placed in the server. In all, our messenger service aims to decrease the user meta-data it tracks while providing the same security guarantees as existing messaging services such as Facebook Messenger or Apple SMS and to persuade existing applications to adopt this new threat model which requires an abundance of caution in handling user meta-data. 
+
+\section{Related Work}
+There are a number of other e2e Encrypted Messengers which also attempt to provide a meta-data hiding scheme. We would be remiss if we didn't mention Signal which much of our own cryptographic work is based on. Signal is a fantastic Messenger for iOS, Android, and Desktop which attempts to target both the average user who may not be well informed on the cryptographic security of Signal and the more involved cryptographer. One of Signal's key goals is "No Ads. No trackers",  which nicely captures the motivation for their stronger goal of meta-data hiding \cite{https://signal.org/signal}. In addition, Signal is incredibly well documented which is what allowed us to implement their Sealed Sender and X3DH protocols effectively. Of course, there are other e2e encrypted Messaging schemes such as Keybase. Keybase also offers encrypted file storing and the ability to connect with what they describe as communities. These communities include social media accounts which may be used to further verify the authenticity of a Keybase profile \cite{https://keybase.io/}. Unfortunately, Keybase does not provide many of the security features that our app does such as Forward Secrecy and meta-data hiding because Keybase works across devices and uses a centralized server \cite{https://book.keybase.io/docs/wallet}. Keybase instead provides users with other security features, such as a secure wallet with which to store their account keys secretly and \textbf{on-device} \cite{https://book.keybase.io/docs/wallet}.  Or the ability for users to leverage commitments and send "Secure Coin Flips" \cite{https://book.keybase.io/docs/wallet}. In all, many existing messengers share similar security goals and do a fantastic job of both achieving those goals and documenting their work.
+
+\section{Solution Overview}
+To accomplish the security goals described above we leverage the Signal documentation heavily and outline our implementation below. 
+
+\subsection{End-2-End Encrypted Messaging}
+In particular, to send end-to-end encrypted messages, we implemented the Double Ratchet algorithm, as described by Signal \cite{https://www.signal.org/docs/specifications/doubleratchet/}. This algorithm maintains Key Derivation Function (KDF) chains and requires each party to store three such chains: a root chain, a sending chain, and a receiving chain which are used to derive symmetric encryption and decryption keys for sending messages \cite{https://www.signal.org/docs/specifications/doubleratchet/}. This process combines a symmetric key ratchet, to generate a unique message key for each message, with a Diffie-Hellman ratchet, that replaces Diffie-Hellman key pairs for each new public key (header) received. To derive message keys from the symmetric key ratchet, the sender and receiver input their respective chain keys into a Key Derivation Function which outputs the next chain key and a message key with which to encrypt or decrypt the message/ciphertext. The Diffie-Hellman ratchet updates these chain keys with each new public key received, providing additional security guarantees. The core component of this protocol is the DH-ratchet because without it an adversary who obtains one party’s chain keys can compute all future message keys and therefore decrypt all future messages \cite{https://www.signal.org/docs/specifications/doubleratchet/}. To combat this, we change the chain keys based on new Diffie-Hellman Outputs produced by each DH-Ratchet step. An adversary would now also need access to each Diffie-Hellman key pair produced by one party to decrypt the associated messages. This property is known as break-in recovery because “future output keys appear random to an adversary who learns the KDF key at some point in time, provided that future inputs have added sufficient entropy” \cite{https://www.signal.org/docs/specifications/doubleratchet/}. The Double Ratchet protocol also provides Forward Secrecy so that past output keys appear random. 
+
+
+\subsection{Initial Secret Sharing}
+Now that we have e2e encrypted messaging, we should address how two parties obtain a shared secret in the first place. One way to do this is by performing a Diffie-Hellman key exchange between the two parties original DH key pairs but this provides no guarantee of who you are actually talking to. For example, a malicious adversary could claim to be "Bob" and simply send their own public key to begin a conversation. We could implement a server that signs and distributes certificates for each user, therefore allowing users to verify the identity of others through server signatures. This is one option we have implemented but it has its drawbacks, namely increased reliance on the server. Therefore, we have implemented a second option: the X3DH key agreement protocol. This protocol uses the Diffie-Hellman key exchange on elliptic curve groups along with the XEdDSA signature scheme to derive a shared secret between the two parties. First Bob publishes an identity (public) key and “pre-keys” (keys sent before Alice engages in the protocol) to a server \cite{https://signal.org/docs/specifications/x3dh/}. Then, Alice retrieves one of these key bundles, verifies the pre-key signature, and uses new ephemeral keys to send the first message to Bob \cite{https://signal.org/docs/specifications/x3dh/}. Alice also derives the shared secret “SK”.  Finally, Bob receives and attempts to decrypt the message Alice sent to verify her identity. If this decryption fails, then the protocol fails. Finally, Bob uses the keys Alice sent to derive the shared secret “SK”. This key agreement protocol clearly achieves the desired outcome of a shared Secret and verifies the identity of each participant through a signature on Bob’s prekey and correct decryption of the message Alice sends. However, to realize our security goal of Authentication, Alice and Bob must verify their identity keys in an “authenticated channel” \cite{https://signal.org/docs/specifications/x3dh/}. This could be as simple as an in-person check that each party's keys match, which is how we plan to implement this feature. In addition, this protocol still relies on a server to relay messages between the two parties, and as such the malicious server setting remains an issue. We have, however, limited our reliance on the server by using manual authentication for Bob and Alice’s conversation setup.
+
+\subsection{Design: X3DH}
+The first step in the X3DH protocol requires Bob to generate the preKey Bundle as described below. This requires the generation of several elliptic curve DH keys and a signature on his preKey.
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+1. Bob $\getsr{preKey_{sk}, preKey_{pk}}$\\
+Bob $\getsr{IK_{sk}, IK_{SK}}$\\
+Bob $\gets tag\gets Sign(preKey_{pk}, IK_{sk})$\\
+Bob $\getsr[OTP_1, OTP_2, ...OTP_n]$\\
+\\
+$PreKey Bundle_{Bob} \gets$ All keys above\\
+\end{tabular}}
+\newline
+\newline
+
+Then, Bob Sends these Keys to the Server to allow for other users to exchange a shared secret with him.
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+2. Server $\gets PreKeyBundle_{Bob} \gets$ Bob\\
+\end{tabular}}
+\newline
+
+Next, Alice requests Bob's information and the Server returns a preKey Bundle response.
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+3. Alice requests Bob Pre-Key Bundle\\
+Server $r \getsr{R}$\\
+Alice $\gets Bob_{IK}, preKey_{pk}, tag, OTP_r \gets$ Server\\
+\end{tabular}}
+\newline
+\newline
+
+Alice Verifies Bob's identity and fails the protocol if his signature does not verify.
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+4. Alice performs $Verify(Bob_{IK}, preKey_{pk}, tag)$\\
+If Verify fails, Alice fails protocol\\
+\\
+\end{tabular}}
+\newline
+\newline
+
+Next, Alice performs a number of Diffie-Hellman exchanges between the public Keys from Bob and her secret keys. Then, performs a Key Derivation Function on the result to derive their Shared Secret.
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+5. Alice $\gets e_{sk}, e_{pk} \getsr{generateDH()}$\\
+Alice $\gets key_1 \gets DH(IK_A, preKey_{pk})$\\
+Alice $\gets key_2 \gets DH(e_{sk}, preKey_{pk})$\\
+Alice $\gets key_3 \gets DH(ek_{sk}, IK_B)$\\
+Alice $\gets key_4 \gets DH(e_{sk}, OTP_{r})$\\
+Alice $\gets SK \gets {KDF(key_1, key_2, key_3, key_4)}$\\
+\\
+\end{tabular}}
+\newline
+\newline
+
+Alice sends a ciphertext to Bob, encrypted under their new Shared Secret.
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+6. Alice $\gets ct \gets Enc("Hi", SK)$\\
+Bob $\gets ct, r, e_{pk} \gets$ Alice\\
+\end{tabular}}
+\newline
+\newline
+
+Finally, Bob attempts to derive the same shared secret as Alice and decrypt the ciphertext. If decryption fails, Bob fails the protocol, otherwise they have successfully shared a secret!
+\newline
+\newline
+\fbox{\begin{tabular}{@{}>{\centering\arraybackslash}p{1\linewidth}@{}}
+7. Bob $\gets Key_{1,2,3,4} \gets$ in Symmetry to Alice\\
+Bob$\gets SK \gets {KDF(key_1, key_2, key_3, key_4)}$\\
+\\
+try:\\
+                                                 msg $\gets Dec(ct, SK)$\\
+\\
+except Exception:\\
+Fail\\
+\\
+else:\\
+Success!\\
+\end{tabular}}
+
+\subsection{From: ?}
+With e2e encrypted messaging and sharing an initial secret under our belt, let's investigate how to reduce the meta-data needed to send a message. In particular, we want to encrypt the “From: Bob” tag for messages sent through our server. To accomplish this, we will prepend an encrypted envelope to each message sent. This envelope will contain the sender’s identity (public) key and certificate so that the recipient can verify the sender. The envelope will be encrypted under an ephemeral sending key and the recipient's public key. Then, upon receipt of a sealed message, envelope, and public ephemeral key, the recipient can decrypt the envelope and retrieve the sender’s identity and certificate. Upon verifying the sender’s identity, the recipient will decrypt the message ciphertext as normal, now assured of who they are communicating with. Success, we have sent a message with the Sealed Sender protocol! There are, however, some drawbacks to this approach. In particular, removing the sender's identity from message sending opens the door for abuse. To mitigate this, we will implement “delivery tokens” derived from the recipient public key \cite{https://signal.org/blog/sealed-sender/}. In this way, a user will only be able to send sealed messages to contacts who have granted them access to this public key. In addition, the “sending certificates” can be given a short expiration window, to mitigate abuse through stolen certs or spoofing.
+
+\subsection{Design: Sealed Sender}
+
+The first Sealed Sender implementation will leave out the use of delivery tokens to be described later. We will start by designing the highest layer of abstraction which simply calls more specific methods to create an encrypted envelope for the Sender's identity and separate ciphertext containing the sender's certificate and message.
+\newline
+
+\begin{Verbatim}[frame=single]
+SS_Encrypt(recipient_pk, msg):
+    header, msg_ct = e2eEncrypt(msg)
+    
+    e_ct, e_mac, e_pk = 
+    SS_eEnvelope(recipient_pk)
+
+    s_ct, s_mac = 
+    SS_eSeal(recipient_pk)
+
+    return header, e_pk, e_ct, e_mac, 
+    s_ct, s_mac
+        
+\end{Verbatim}
+
+Next, we will place the Sender's identity into an envelope by encrypting it under the recipient's public key so that they can decrypt the envelope later. 
+\newline
+\begin{Verbatim}[frame=single]
+SS_eEnvelope(recipient_pk):
+    e_sk, e_pk = ec.SECP256R1()
+    ikm = DH(e_sk, recipient_pk)
+    
+    e_chainKey,e_cipherKey,e_macKey =
+    KDF(salt, ikm)
+
+    e_ct =
+    AES_Encrypt(self.pk, e_cipherKey)
+
+    e_mac = MAC(e_ct, e_macKey)
+
+    return e_ct, e_mac, e_pk
+        
+\end{Verbatim}
+
+Now we simply place the ciphertext produced by our e2e messaging protocol, the sender's certificate, and signature into a separate ciphertext and return them to $SS\_Encrypt$ to be routed by the Server.
+\newline
+
+\begin{Verbatim}[frame=single]
+SS_eSeal(recipient_pk):
+    ikm = DH(self.sk, recipient_pk)
+    
+    s_cipherKey, s_macKey =
+    KDF(salt, ikm)
+
+    s_ct =
+    AES_Encrypt( sender_cert || 
+    sender_sig || msg_ct,
+    s_cipherKey )
+
+    s_mac = MAC(s_ct, s_macKey)
+
+    return s_ct, s_mac
+        
+\end{Verbatim}
+
+For decryption, we will again begin at the highest layer of abstraction for decrypting a sealed message. This method will first call another method to unseal the sender's identity from the envelope. Then, it will unseal the sender's certificate and verify their identity. Finally, it will retrieve the message ciphertext and delegate our e2e messaging protocol to decrypt to the plaintext message and update our conversation.
+\newline
+\begin{Verbatim}[frame=single]
+SS_Decrypt(header, e_pk, e_ct, e_mac, 
+    s_ct, s_mac):
+    
+    sender_pk = 
+        SS_dEnvelope(e_pj, e_ct, e_mac)
+
+    msg_ct = SS_dSeal(recipient_pk, 
+    s_ct, s_mac)
+
+    return e2eDecrypt(header, msg_ct)
+
+\end{Verbatim}
+
+Let us begin by deriving the symmetric envelope keys and retrieving the sender's identity.
+\newline
+\begin{Verbatim}[frame=single]
+SS_dEnvelope(e_pk, e_ct, e_mac):
+    ikm = DH(self.sk, e_pk)
+    
+    d_chainKey,d_cipherKey,d_macKey =
+    KDF(salt, ikm)
+
+    try:
+        Verify(e_ct, d_macKey, e_mac)
+    except:
+        Fail
+
+    sender_pk = 
+        AES_Decrypt(e_ct, d_cipherKey)
+
+    return sender_pk
+        
+\end{Verbatim}
+
+Then, we can retrieve derive additional symmetric keys to unseal the Sender's certificate and signature. Using these, we will verify their identity and return the original message ciphertext for further decryption.
+\newline
+
+\begin{Verbatim}[frame=single]
+SS_dSeal(recipient_pk, s_ct, s_mac):
+    ikm = DH(self.sk, recipient_pk)
+    
+    s_cipherKey, s_macKey =
+    KDF(salt, ikm)
+
+    try:
+        Verify(s_ct, s_mac, s_macKey)
+    except:
+        Fail
+        
+    s_cert, s_sig, msg_ct =
+    AES_Dec(salt, s_ct, s_cipherKey)
+
+    try:
+        Verify(s_cert, s_sig)
+    except:
+        Fail
+
+    return msg_ct
+        
+\end{Verbatim}
+Through these function sketches, it is clear that the sealed sender protocol relies on additional public key cryptography and also requires an additional layer of abstraction to protect Sealed Sender recipients from abuse. To solve this issue, we now present delivery tokens.
+
+\subsection{Design: Delivery Tokens}
+Delivery Tokens require the integration of our previous protocols with a server. In short, each user who wishes to receive sealed messages will register a delivery token with the server. The Server will map this delivery token to a reference of that client itself. Due to the encapsulation of the client's properties, the Server will only have access to the client's "Recieve Mail" method. Then, the Server will call this method on behalf of the Client, performing the previously described Sealed Sender protocol and updating the client's private conversations. 
+\newline
+
+\begin{Verbatim}[frame=single]
+class Server:
+    self.inboxes = {}
+    
+    register(Client C, Token):
+        inboxes[Token] = C
+
+    SendMail(Token, s_ct, s_mac, 
+    e_ct, e_mac, e_pk):
+        inboxes[Token].ReceiveMail(
+        s_ct, s_mac, e_ct, 
+        e_mac, e_pk)
+        
+\end{Verbatim}
+
+This will also require an additional layer of abstraction above the $SS\_Decrypt$ function which will update a client's private conversations without exposing any information to the server. This is completed easily with the void method "Receive Mail".
+\newline
+
+\begin{Verbatim}[frame=single]
+class Client:
+    self.conns = {}
+
+    ReceiveMail(s_ct, s_mac, 
+    e_ct, e_mac, e_pk):
+        name, msg = SS_Decrypt(s_ct,
+        s_mac, e_ct, e_mac, e_pk)
+
+        conns[name] = msg
+        
+\end{Verbatim}
+
+
+
+\subsection{GitHub Link}
+\begin{itemize}
+\item https://github.com/gabrieliUNC/End-to-End-Messenger-with-Sealed-Sender
+\end{itemize}
+
+\section{Future Work}
+Although we developed the cryptographic schemes that this paper laid out in the beginning, there is still more to be done in the arena of meta-data hiding, as well as in application features. For updates to the security of the app, one key idea is making the app post-quantum secure. This would require significant updates to the public key cryptography which is heavily integrated into our existing application. Public Key Crypto is part of the key-exchange protocol, Sealed Sender protocol, as well as the Double Ratchet protocol that we use for e2e encrypted messaging. Thankfully, Signal has already solved this issue and provided documentation of the Post Quantum Extended Diffie Hellman Protocol (PQXDH ) \cite{https://signal.org/docs/specifications/pqxdh/}. In addition, for our application, we would like to add features such as group chats and attachment sending. For group chats, we would implement Signal's Sesame protocol which leverages the underlying cryptographic primitives we already use but extends to the multi-party setting. For attachment sending, we would implement a scheme that splits up large attachments and encrypts them individually, as described by Keybase \cite{https://book.keybase.io/docs/chat/crypto}. In all, we will further our goal of meta-data hiding and additional security features by developing new state-of-the-art security features provided by existing and well-tested applications such as Signal and Keybase.
+
+
+\begin{thebibliography}{9}
+
+\bibitem{https://www.signal.org/docs/specifications/doubleratchet/}
+Moxie Marlinspike. "The Double Ratchet Algorithm". Signal, 2016.
+\bibitem{https://signal.org/blog/sealed-sender/}
+Joshua Lund. "Sealed Sender". Signal, 2018.
+\bibitem{https://signal.org/docs/specifications/x3dh/}
+Moxie Marlinspike. "The X3DH Key Agreement Protocol". Signal, 2016.
+\bibitem{https://www.bbc.com/news/technology-46618582}
+BBC. "Facebook's data-sharing deals exposed". BBC, 2018.
+\bibitem{https://epic.org/documents/apple-v-fbi-2/}
+EPIC. "Apple v. FBI". EPIC, 2016.
+\bibitem{https://support.google.com/searchads/answer/2839090?hl=en}
+Google. "How Google Marketing Platform Advertising products and Google Ad Manager use cookies". Google, 2023
+\bibitem{https://keybase.io/}
+Keybase. "End-to-end encryption for things that matter". Keybase, 2024
+\bibitem{https://signal.org/signal}
+Signal. "Speak Freely". Signal, 2024
+\bibitem{https://book.keybase.io/docs/wallet}
+Keybase. "Keybase Book". Keybase, 2022.
+\bibitem{https://signal.org/docs/specifications/pqxdh/}
+Signal. "The PQXDH Key Agreement Protocol". Ehren Kret, Rolfe Schmidt, 2023.
+\bibitem{https://book.keybase.io/docs/chat/crypto}
+Keybase. "High Level Overview". Keybase Book, 2022.
+
+\end{thebibliography}
+
+
+\end{document}
